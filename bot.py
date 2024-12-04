@@ -1,30 +1,42 @@
+import asyncio
 import logging
-from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import CommandStart
+from aiogram.types import Message
 
-from main import process_user_question
+from embedding import generate_data_for_final_response
 
-# Включаем логирование
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Установите уровень логирования
+logging.basicConfig(level=logging.INFO)
 
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('Привет! Задайте свой вопрос о MetaMask.')
+# Токен вашего бота
+TOKEN = '7901231896:AAG9eimhNHdee-Eg8lxde2yYjm2NdDb1GZA'
 
-def handle_message(update: Update, context: CallbackContext) -> None:
-    user_question = update.message.text
-    response = process_user_question(user_question)
-    update.message.reply_text(response)
+# Инициализация бота и диспетчера
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
 
-def main():
-    updater = Updater("YOUR_TELEGRAM_BOT_TOKEN")
+@dp.message(CommandStart())
+async def command_start_handler(message: Message) -> None:
+    await message.answer("Привет! Задайте свой вопрос о MetaMask.")
 
-    dispatcher = updater.dispatcher
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+@dp.message()
+async def handle_message(message: types.Message):
+    user_question = message.text
+    response = generate_data_for_final_response(user_question)
+    await message.reply(response)
 
-    updater.start_polling()
-    updater.idle()
 
-if __name__ == '__main__':
-    main()
+async def main() -> None:
+    # Запуск обработки обновлений
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+
+
+
+

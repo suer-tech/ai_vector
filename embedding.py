@@ -1,99 +1,220 @@
 import faiss
 import numpy as np
-from main import generate_embedding
+import json
+import os
 
-instructions = [
-    {
-        "title": "Что такое MetaMask?",
-        "content": "MetaMask — это криптовалютный кошелек и браузерное расширение, которое позволяет пользователям взаимодействовать с блокчейном Ethereum и децентрализованными приложениями (dApps). Он поддерживает ETH и токены стандарта ERC-20."
-    },
-    {
-        "title": "Как скачать и установить расширение для браузера?",
-        "content": "Перейдите на официальный сайт MetaMask. Выберите версию для вашего браузера (Chrome, Firefox, Edge) и следуйте инструкциям по установке."
-    },
-    {
-        "title": "Установка мобильного приложения.",
-        "content": "Загрузите приложение MetaMask из Google Play или App Store. Установите его на ваше устройство."
-    },
-    {
-        "title": "Создание нового кошелька или восстановление существующего.",
-        "content": "При первом запуске выберите 'Создать новый кошелек' или 'Восстановить кошелек', если у вас уже есть seed-фраза."
-    },
-    {
-        "title": "Создание пароля.",
-        "content": "Придумайте надежный пароль для защиты вашего кошелька."
-    },
-    {
-        "title": "Сохранение и подтверждение секретной фразы (seed-фразы).",
-        "content": "Запишите вашу seed-фразу и храните ее в безопасном месте. Это единственный способ восстановить доступ к вашему кошельку."
-    },
-    {
-        "title": "Настройка безопасности.",
-        "content": "Включите дополнительные меры безопасности, такие как аутентификация по отпечатку пальца или Face ID (на мобильных устройствах)."
-    },
-    {
-        "title": "Как добавить токены в MetaMask?",
-        "content": "Нажмите 'Добавить токен' в интерфейсе кошелька и введите адрес контракта токена."
-    },
-    {
-        "title": "Как пополнить кошелек (например, USDT)?",
-        "content": "Используйте обменники или другие платформы для перевода средств на ваш адрес кошелька."
-    },
-    {
-        "title": "Как вывести деньги с MetaMask?",
-        "content": "Перейдите в раздел 'Отправить', введите адрес получателя и сумму."
-    },
-    {
-        "title": "Как добавить новые сети в MetaMask?",
-        "content": "В настройках выберите 'Добавить сеть' и введите данные сети (RPC URL, Chain ID и т.д.)."
-    },
-    {
-        "title": "Переключение между сетями.",
-        "content": "Выберите нужную сеть из выпадающего списка в верхней части интерфейса."
-    },
-    {
-        "title": "Как отправлять и получать криптовалюту?",
-        "content": "Для отправки нажмите 'Отправить', введите адрес получателя и сумму. Для получения просто скопируйте свой адрес кошелька."
-    },
-    {
-        "title": "Как переводить средства между сетями?",
-        "content": "Используйте мосты (bridges) для перевода активов между различными сетями."
-    },
-    {
-        "title": "Подключение к децентрализованным приложениям (dApps).",
-        "content": "Откройте dApp в браузере и нажмите 'Подключить кошелек'. Выберите MetaMask."
-    },
-    {
-        "title": "Примеры использования (Uniswap и др.).",
-        "content": "На Uniswap выберите токены для обмена, подтвердите транзакцию через MetaMask."
-    },
-    {
-        "title": "Как восстановить доступ к кошельку?",
-        "content": "Используйте вашу seed-фразу для восстановления доступа через интерфейс MetaMask."
-    },
-    {
-        "title": "Как решить проблемы с входом в кошелек?",
-        "content": "Проверьте правильность введенного пароля и наличие обновлений приложения."
+import requests
+from colorama import init, Fore, Style
+from instructions import full_instructions
+from jina import interact_stream
+
+init()
+
+# Функция поиска по вопросу
+def find_instruction(question):
+    # Путь к файлам для сохранения
+    index_file = 'vector_index.bin'
+    instructions_file = 'instructions.json'
+    embeddings_file = 'embeddings.npy'
+
+    # Проверка на существование файлов
+    if os.path.exists(index_file) and os.path.exists(instructions_file) and os.path.exists(embeddings_file):
+        # Загрузка индекса
+        index = faiss.read_index(index_file)
+
+        # Загрузка инструкций
+        with open(instructions_file, 'r', encoding='utf-8') as f:
+            instructions_dict = json.load(f)
+
+        # Загрузка эмбеддингов
+        embeddings_array = np.load(embeddings_file).astype('float32')
+
+    print(f'Вопрос: {question}')
+    print('')
+    # Проверка размерности эмбеддингов инструкций
+    print("Размерность эмбеддингов инструкций:", embeddings_array.shape)
+
+    # Генерация эмбеддинга для вопроса
+    question_embedding = generate_embedding(question)
+    question_embedding = np.array(question_embedding).astype('float32').reshape(1, -1)
+
+    # Нормализация эмбеддинга вопроса
+    faiss.normalize_L2(question_embedding)
+
+    # Проверка размерности эмбеддинга вопроса
+    print("Размерность эмбеддинга вопроса:", question_embedding.shape)
+
+    # Убедитесь, что размеры совпадают
+    if embeddings_array.shape[1] != question_embedding.shape[1]:
+        raise ValueError("Размерности эмбеддингов инструкций и вопроса не совпадают!")
+
+    # Поиск ближайших соседей
+    D, I = index.search(question_embedding, k=1)  # k - количество ближайших соседей
+
+    print("Индексы похожих инструкций:", I[0])
+
+    instructions_array = []
+
+    # Извлечение текстов инструкций по найденным индексам
+    for idx in I[0]:
+        str_idx = str(idx)
+        if str_idx in instructions_dict:
+            instruct = instructions_dict[str_idx]
+            instructions_array.append(instruct['content'])
+            print(f"Инструкция: {instruct['title']}\nСодержание: {instruct['content']}\n")
+
+    return instructions_array
+
+
+def interact_stream_voiceflow(text):
+    data_launch = {
+        "action": {
+            "type": "launch"
+        }
     }
-]
 
-embeddings = []
-for instruction in instructions:
-    full_text = f"{instruction['title']} {instruction['content']}"
-    embedding = generate_embedding(full_text)  # Вызов функции для получения эмбеддинга через API
-    if embedding is not None and len(embedding) == 10:  # Проверяем, что длина равна 20
-        embeddings.append(embedding)
+    data_text = {
+        "action": {
+            "type": "text",
+            'payload': f'{text}'
+        }
+    }
 
-print(embeddings)
-# Преобразование списка эмбеддингов в numpy массив
-embeddings_array = np.array(embeddings).astype('float32')
+    user_id = "your_user_id_here"
+    voiceflow_api_key = "VF.DM.67499102b357d4928b4ac58b.ZQrIJbkjPUwhCr2I"
+    project_id = "672caaaf565396bb1012956f"
+    url = f"https://general-runtime.voiceflow.com/v2/project/{project_id}/user/{user_id}/interact/stream"
 
-# Создание индекса
-index = faiss.IndexFlatL2(embeddings_array.shape[1])  # L2 метрика
-index.add(embeddings_array)  # Добавление эмбеддингов в индекс
+    headers = {
+        'Accept': 'text/event-stream',
+        'Authorization': voiceflow_api_key,
+        'Content-Type': 'application/json'
+    }
 
-# Сохранение индекса на диск
-faiss.write_index(index, 'vector_index.bin')
+    # Запуск взаимодействия
+    requests.post(url, headers=headers, json=data_launch)
+    response = requests.post(url, headers=headers, json=data_text)
 
-# Сохранение инструкций для дальнейшего использования
-instructions_dict = {i: instruction for i, instruction in enumerate(instructions)}
+    if response.status_code == 200:
+        # Обработка данных ответа
+        for line in response.iter_lines():
+            if line:
+                decoded_line = line.decode('utf-8')
+                if decoded_line.startswith("data:"):
+                    try:
+                        # Удаляем префикс "data:" и разбираем JSON
+                        json_data = decoded_line[5:]
+                        parsed_data = json.loads(json_data)
+
+                        # Логируем всю структуру parsed_data
+                        # print("Parsed Data:", json.dumps(parsed_data, indent=4))
+
+                        # Проверяем наличие нужных данных
+                        if 'paths' in parsed_data and len(parsed_data['paths']) > 0:
+                            for path in parsed_data['paths']:
+                                event_type = path.get('event', {}).get('type')
+                                event_payload = path.get('event', {}).get('payload', {})
+                                # print(f"Event Type: {event_type}")
+                                # print(f"Event Payload: {json.dumps(event_payload, indent=4)}")
+
+                                # Извлечение message и output из payload
+                                message = event_payload.get('message')
+                                output = event_payload.get('output')
+
+                                # if message:
+                                #     print("Message Found:", message)
+                                #     # Попробуем разобрать message как JSON
+                                #     try:
+                                #         resp = json.loads(message)
+                                #         print("resp:", resp)
+                                #         return resp
+                                #     except json.JSONDecodeError:
+                                #         print("Failed to decode message as JSON:", message)
+
+                                if output:
+                                    print(f"{Fore.GREEN}Сгенерированный ответ: {output}{Style.RESET_ALL}")
+                                    # Попробуем разобрать output как JSON
+                                    # try:
+                                        # embedding_list = json.loads(output)
+                                        # print("Embedding List from Output:", embedding_list)
+                                    return output
+                                    # except json.JSONDecodeError:
+                                    #     print("Failed to decode output as JSON:", output)
+
+                    except json.JSONDecodeError:
+                        print(f"Не удалось разобрать: {decoded_line}")
+                    except KeyError as e:
+                        print(f"Ошибка ключа: {e}, данные: {decoded_line}")
+    else:
+        print(f"Error: {response.status_code}")
+
+
+def generate_embedding(text):
+    # Здесь должен быть код для отправки текста на API модели генерации эмбеддингов
+    response = interact_stream(text)
+    return response
+
+
+def generate_data_for_final_response(user_question):
+    instructions_data = find_instruction(user_question)
+    text = f"{Fore.RED}Вопрос: {user_question}{Style.RESET_ALL}\n{Fore.BLUE}Найденные инструкции: {instructions_data}{Style.RESET_ALL}"
+    print(text)
+    print('')
+    data_for_final_response = interact_stream_voiceflow(text)
+    return data_for_final_response
+
+
+
+# # Путь к файлам для сохранения
+# index_file = 'vector_index.bin'
+# instructions_file = 'instructions.json'
+# embeddings_file = 'embeddings.npy'
+#
+# # Проверка на существование файлов
+# if os.path.exists(index_file) and os.path.exists(instructions_file) and os.path.exists(embeddings_file):
+#     # Загрузка индекса
+#     index = faiss.read_index(index_file)
+#
+#     # Загрузка инструкций
+#     with open(instructions_file, 'r', encoding='utf-8') as f:
+#         instructions_dict = json.load(f)
+#
+#     # Загрузка эмбеддингов
+#     embeddings_array = np.load(embeddings_file).astype('float32')
+# else:
+#     instructions = full_instructions
+#
+#     # Генерация эмбеддингов для инструкций
+#     embeddings = []
+#     for instruction in instructions:
+#         full_text = f"{instruction['title']} {instruction['content']}"
+#         embedding = generate_embedding(full_text)  # Вызов функции для получения эмбеддинга через API
+#         if embedding is not None:  # Проверяем, что длина равна 20
+#             embeddings.append(embedding)
+#
+#     # Преобразование списка эмбеддингов в numpy массив
+#     embeddings_array = np.array(embeddings).astype('float32')
+#
+#     # Нормализация эмбеддингов для использования с косинусным сходством
+#     faiss.normalize_L2(embeddings_array)
+#
+#     # Создание индекса
+#     index = faiss.IndexFlatL2(embeddings_array.shape[1])  # L2 метрика
+#     index.add(embeddings_array)  # Добавление эмбеддингов в индекс
+#
+#     # Сохранение индекса на диск
+#     faiss.write_index(index, index_file)
+#
+#     # Сохранение инструкций для дальнейшего использования
+#     instructions_dict = {i: instruction for i, instruction in enumerate(instructions)}
+#
+#     # Сохранение инструкций в файл (например, JSON)
+#     with open(instructions_file, 'w', encoding='utf-8') as f:
+#         json.dump(instructions_dict, f, ensure_ascii=False, indent=4)
+#
+#     # Сохранение эмбеддингов в файл (например, NumPy)
+#     np.save(embeddings_file, embeddings_array)
+#
+#     print("Эмбеддинги и инструкции успешно загружены или созданы.")
+
+
